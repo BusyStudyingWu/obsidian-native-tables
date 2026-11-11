@@ -1,0 +1,13 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {scan,serialize,merge,unmerge,sort,structure,fresh,split,type Table} from './model';
+const sample=():Table=>{const cells=[['名字','数量'],['甲','10'],['乙','2'],['丙','']];return{from:0,to:0,cells,align:[],meta:fresh(cells)};};
+test('中文、管道符和代码跨度解析',()=>{assert.deepEqual(split('| 中文 \\| 内容 | `a|b` |'),['中文 \\| 内容','`a|b`']);});
+test('序列化与多表格往返，代码块不接管',()=>{const t=sample();t.cells[1][0]='[[中文]] <br> **粗体**';const source=serialize(t);assert.deepEqual(scan(source)[0].cells,t.cells);assert.equal(scan(source+'\n\n'+source).length,2);assert.equal(scan('```md\n'+source+'\n```').length,0);});
+test('合并保留原文，编辑后拆分保留当前内容',()=>{let t=sample();const a={r:1,c:0,er:2,ec:1};merge(t,a);assert.equal(t.cells[1][0],'甲<br>10<br>乙<br>2');unmerge(t,a);assert.deepEqual(t.cells,sample().cells);merge(t,a);t.cells[1][0]='新内容';unmerge(t,a);assert.equal(t.cells[1][0],'新内容');assert.equal(t.cells[2][1],'');});
+test('表头可跨行合并恢复，合并交叠被阻止',()=>{const t=sample();merge(t,{r:0,c:0,er:1,ec:0});assert.equal(scan(serialize(t))[0].error,undefined);unmerge(t,{r:0,c:0,er:1,ec:0});assert.deepEqual(t.cells,sample().cells);merge(t,{r:1,c:0,er:2,ec:0});assert.throws(()=>merge(t,{r:2,c:0,er:3,ec:0}));assert.throws(()=>sort(t,1));});
+test('数字排序空值置底并跟随样式和行高',()=>{const t=sample();t.meta.styles['2:0']={background:'#ff0000'};t.meta.heights[2]=80;sort(t,1);assert.equal(t.cells[1][0],'乙');assert.equal(t.meta.styles['1:0'].background,'#ff0000');assert.equal(t.meta.heights[1],80);sort(t,1,true);assert.equal(t.cells[1][0],'甲');assert.equal(t.cells[3][0],'丙');});
+test('行列增删移动样式、保护表头',()=>{const t=sample();t.meta.styles['2:1']={align:'right'};structure(t,'row',1);assert.equal(t.meta.styles['3:1'].align,'right');structure(t,'col',1);assert.equal(t.meta.styles['3:2'].align,'right');assert.throws(()=>structure(t,'row',0,true));});
+test('外部结构变化和损坏版本不会静默覆盖',()=>{const t=sample();const source=serialize(t);assert.ok(scan(source.replace('| 丙 |  |\n',''))[0].error);assert.ok(scan(source.replace('"version":1','"version":99'))[0].error);});
+test('元数据中的注释终止符被转义',()=>{const t=sample();merge(t,{r:1,c:0,er:1,ec:1});t.meta.merges[0].original[0][0]='<!-- -->';const s=serialize(t);assert.equal(s.split('<!-- native-tables:')[1].includes('<!--'),false);assert.equal(scan(s)[0].meta.merges[0].original[0][0],'<!-- -->');});
+test('横向合并跟随整行排序',()=>{const t=sample();merge(t,{r:2,c:0,er:2,ec:1});sort(t,0);const g=t.meta.merges[0];assert.equal(t.cells[g.r][g.c],g.joined);});
+test('前置属性、引用与列表表格不接管',()=>{assert.equal(scan('---\nvalue: |\n  | A | B |\n  | --- | --- |\n---\n\n> | A | B |\n> | --- | --- |\n\n  | A | B |\n  | --- | --- |').length,0);});
