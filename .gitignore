@@ -5,3 +5,5 @@ integration-bundle.mjs
 *.log
 .env
 .env.*
+
+.browser-check/

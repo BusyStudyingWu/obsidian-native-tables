@@ -306,6 +306,7 @@ var Grid = class {
     this.anchor = { r: this.selection.r, c: this.selection.c };
     this.cursor = { ...this.anchor };
     this.el.className = "nt-grid";
+    this.el.contentEditable = "false";
     if (o.commit) this.el.classList.add("nt-editable");
     this.el.tabIndex = 0;
     this.el.setAttribute("aria-label", "\u589E\u5F3A\u8868\u683C\u7F16\u8F91\u5668");
@@ -775,6 +776,8 @@ var Grid = class {
     this.dismiss();
   };
   dismiss() {
+    const nativeSelection = document.getSelection();
+    if (nativeSelection?.anchorNode && this.el.contains(nativeSelection.anchorNode)) nativeSelection.removeAllRanges();
     this.active = false;
     this.endDrag();
     this.previewAxis();
@@ -1151,7 +1154,7 @@ var Grid = class {
     this.table.querySelectorAll("td,th").forEach((td) => {
       const r = Number(td.dataset.r), c = Number(td.dataset.c), g = owner(this.o.table, r, c);
       const yes = r <= this.selection.er && r + (g?.rs ?? 1) > this.selection.r && c <= this.selection.ec && c + (g?.cs ?? 1) > this.selection.c;
-      td.classList.toggle("nt-selected", yes && this.active);
+      td.classList.toggle("nt-selected", yes && this.active && !this.editing);
       if (yes) selected.push(td);
     });
     const style = this.o.table.meta.styles[key(this.selection.r, this.selection.c)];
@@ -1171,9 +1174,12 @@ var Grid = class {
     this.toolbar.hidden = this.editing;
     const b = this.toolbar.getBoundingClientRect();
     const above = (this.selection.r === 0 ? Math.min(top, base.top) : top) - b.height - 8;
-    let y = Math.min(top, this.table.getBoundingClientRect().top) - b.height - 14;
-    if (y < 8) y = bottom + 8;
-    if (y + b.height > window.innerHeight - 8) y = Math.max(8, above);
+    let y = Math.max(8, base.top, this.table.getBoundingClientRect().top - b.height - 14);
+    if (y + b.height > window.innerHeight - 8) {
+      this.toolbar.hidden = true;
+      this.closePopup();
+      return;
+    }
     this.toolbar.style.left = `${Math.max(8, Math.min(left, window.innerWidth - b.width - 8))}px`;
     this.toolbar.style.top = `${y}px`;
     this.positionPopup();
@@ -1209,7 +1215,9 @@ var Grid = class {
     if (!td) return;
     this.endDrag();
     this.active = true;
-    const cellHeight = td.getBoundingClientRect().height;
+    const cellHeight = td.getBoundingClientRect().height, cellStyle = getComputedStyle(td), paddingTop = parseFloat(cellStyle.paddingTop) || 0, paddingBottom = parseFloat(cellStyle.paddingBottom) || 0, borders = (parseFloat(cellStyle.borderTopWidth) || 0) + (parseFloat(cellStyle.borderBottomWidth) || 0), contentHeight = Math.max(1, cellHeight - paddingTop - paddingBottom - borders);
+    const placeholder = td.querySelector(".nt-value");
+    const oldMinHeight = placeholder.style.minHeight;
     this.selection = rect({ r, c }, { r, c });
     this.anchor = { r, c };
     this.cursor = { r, c };
@@ -1220,12 +1228,20 @@ var Grid = class {
     this.closePopup();
     const input = document.createElement("textarea");
     input.className = "nt-editor";
-    input.style.minHeight = `${Math.max(32, cellHeight - 16)}px`;
+    input.style.minHeight = "0";
+    input.style.top = `${paddingTop}px`;
+    input.style.left = cellStyle.paddingLeft;
+    input.style.width = `calc(100% - ${(parseFloat(cellStyle.paddingLeft) || 0) + (parseFloat(cellStyle.paddingRight) || 0)}px)`;
     input.value = initial ?? this.o.table.cells[r][c].replace(/<br\s*\/?\s*>/gi, "\n");
-    td.replaceChildren(input);
+    td.classList.add("nt-editing-cell");
+    this.previewAxis();
+    this.mark();
+    td.append(input);
     const fit = () => {
-      input.style.height = "auto";
-      input.style.height = `${Math.max(32, cellHeight - 16, input.scrollHeight)}px`;
+      input.style.height = "0px";
+      const height = Math.max(contentHeight, input.scrollHeight);
+      input.style.height = `${height}px`;
+      placeholder.style.minHeight = height > contentHeight ? `${height}px` : oldMinHeight;
     };
     input.addEventListener("input", fit);
     fit();
@@ -1235,10 +1251,14 @@ var Grid = class {
     const done = (save) => {
       if (finished) return;
       finished = true;
+      td.classList.remove("nt-editing-cell");
+      placeholder.style.minHeight = oldMinHeight;
+      input.remove();
       this.editing = false;
       if (save) {
         const value = input.value.replace(/\n/g, "<br>");
-        this.apply((t) => t.cells[r][c] = value, this.active);
+        if (value === this.o.table.cells[r][c]) this.render();
+        else this.apply((t) => t.cells[r][c] = value, this.active);
       } else this.render();
     };
     input.onblur = () => done(true);
@@ -1388,7 +1408,7 @@ var Grid = class {
     h.className = `nt-resize nt-resize-${axis}`;
     h.title = axis === "col" ? "\u62D6\u52A8\u8C03\u6574\u6574\u5217\u5BBD\u5EA6" : "\u62D6\u52A8\u8C03\u6574\u6574\u884C\u9AD8\u5EA6";
     h.onpointerenter = () => {
-      if (!this.resizing && !this.editing) this.previewAxis(axis, index);
+      if (this.active && !this.resizing && !this.editing) this.previewAxis(axis, index);
     };
     h.onpointerleave = () => {
       if (!this.resizing) this.previewAxis();
@@ -1526,7 +1546,7 @@ var TableWidget = class extends import_view.WidgetType {
       }
       const insert = serialize(next);
       view.dispatch({ changes: { from: current.from, to: current.to, insert }, selection: { anchor: current.from }, userEvent: "input" });
-      view.focus();
+      if (p.sessions.get(this.path + ":" + next.meta.id + ":" + t.from)?.focus) view.focus();
     };
     const serializeOriginal = view.state.doc.sliceString(t.from, t.to);
     grid = new Grid({ app: p.app, source: this.path, component, table: t, session: p.sessions.get(this.path + ":" + t.meta.id + ":" + t.from) ?? (() => {

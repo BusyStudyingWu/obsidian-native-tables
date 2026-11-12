@@ -63,3 +63,11 @@
 
 /* Rails belong to the active selection; hover alone must not restore them. */
 .nt-edge-controls[hidden]{display:none!important;}
+
+/* Reserve a stable toolbar lane inside CM's block widget. */
+.nt-grid.nt-editable{padding-top:68px;}
+.nt-grid textarea.nt-editor{position:absolute;min-width:0!important;min-height:0!important;max-height:none;font:inherit;line-height:inherit;z-index:6;}
+.nt-editing-cell>.nt-value{visibility:hidden;}
+.nt-grid .nt-editing-cell{background-image:none!important;}
+
+.nt-editing-cell>.nt-resize{visibility:hidden;}
